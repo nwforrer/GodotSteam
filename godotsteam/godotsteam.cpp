@@ -3185,7 +3185,7 @@ int Steam::getServerCount(uint64_t serverRequest){
 	if(SteamMatchmakingServers() == NULL){
 		return 0;
 	}
-	return SteamMatchmakingServers()->GetServerCount((HServerListRequest)serverRequest);
+	return SteamMatchmakingServers()->GetServerCount(this->serverRequest);
 }
 
 // Get the details of a given server in the list.
@@ -3193,8 +3193,8 @@ Dictionary Steam::getServerDetails(uint64_t serverRequest, int server){
 	// Create a dictionary to populate
 	Dictionary gameServer;
 	if(SteamMatchmakingServers() != NULL){
-		gameserveritem_t* serverItem = new gameserveritem_t;
-		SteamMatchmakingServers()->GetServerDetails((HServerListRequest)serverRequest, server);
+		gameserveritem_t* serverItem = SteamMatchmakingServers()->GetServerDetails(this->serverRequest, server);
+		printf("[Steam] Calling GetServerDetails (ping=%d)\n", serverItem->m_nPing);
 		// Populate the dictionary
 		gameServer["ping"] = serverItem->m_nPing;
 		gameServer["success_response"] = serverItem->m_bHadSuccessfulResponse;
@@ -3210,6 +3210,19 @@ Dictionary Steam::getServerDetails(uint64_t serverRequest, int server){
 		gameServer["secure"] = serverItem->m_bSecure;
 		gameServer["last_played"] = serverItem->m_ulTimeLastPlayed;
 		gameServer["server_version"] = serverItem->m_nServerVersion;
+		gameServer["steam_id"] = (uint64_t)serverItem->m_steamID.ConvertToUint64();
+		gameServer["name"] = serverItem->GetName();
+
+		// convert ip back into a string
+		uint32 ip = serverItem->m_NetAdr.GetIP();
+		const int NBYTES = 4;
+		uint8 octet[NBYTES];
+		char gameIP[16];
+		for(int j = 0; j < NBYTES; j++){
+			octet[j] = ip >> (j * 8);
+		}
+		sprintf(gameIP, "%d.%d.%d.%d", octet[3], octet[2], octet[1], octet[0]);
+		gameServer["ip"] = gameIP;	
 	}
 	// Return the dictionary
 	return gameServer;
@@ -3343,24 +3356,44 @@ void Steam::releaseRequest(uint64_t serverRequest){
 //}
 
 // Request a new list of servers of a particular type.  These calls each correspond to one of the EMatchMakingType values.
-//uint64_t Steam::requestInternetServerList(int appID, Array filters){
-//	if(SteamMatchmakingServers() == NULL){
-//		return 0;
-//	}
-//	MatchMakingKeyValuePair_t *ppchFilters = new MatchMakingKeyValuePair_t();
-//	uint32 filterSize = filters.size();
-//	for (uint32 i=0; i < filterSize; i++){
-//		// Get the key/value pair
-//		Array pair = filters[i];
-//		// Get the key from the filter pair
-//		String key = (String)pair[i];
-//		ppchFilters->m_szKey[i] = key.utf8().get_data();
-//		// Get the value from the filter pair
-//		String value = (String)pair[i];
-//		ppchFilters->m_szValue[i] = value.utf8().get_data();
-//	}
-//	return SteamMatchmakingServers()->RequestInternetServerList((AppId_t)appId, ppchFilters, filterSize, serverResponse);
-//}
+uint64_t Steam::requestInternetServerList(int appID, Array filters){
+	if(SteamMatchmakingServers() == NULL){
+		return 0;
+	}
+	printf("[Steam] requestInternetServerList\n");
+	uint32 filterSize = filters.size();
+	MatchMakingKeyValuePair_t *ppchFilters = new MatchMakingKeyValuePair_t[filterSize];
+	for (uint32 i=0; i < filterSize; i++){
+		// Get the key/value pair
+		Array pair = filters[i];
+		// Get the key from the filter pair
+		String key = (String)pair[0];
+		strncpy(ppchFilters[i].m_szKey, key.utf8().get_data(), sizeof(ppchFilters[i].m_szKey));
+		// Get the value from the filter pair
+		String value = (String)pair[1];
+		strncpy(ppchFilters[i].m_szValue, value.utf8().get_data(), sizeof(ppchFilters[i].m_szValue));
+
+		printf("[Steam] filter: %s: %s\n", key.utf8().get_data(), value.utf8().get_data());
+	}
+
+	this->serverRequest = SteamMatchmakingServers()->RequestInternetServerList((AppId_t)appID, &ppchFilters, filterSize, this);
+	return (uint64_t)this->serverRequest;
+}
+
+void Steam::RefreshComplete(HServerListRequest hRequest, EMatchMakingServerResponse response) {
+	printf("[Steam] Refresh complete!\n");
+	emit_signal("server_refresh_complete", hRequest, response);
+}
+
+void Steam::ServerResponded(HServerListRequest hRequest, int iServer) {
+	printf("[Steam] Server responded\n");
+	emit_signal("server_responded", hRequest, iServer);
+}
+
+void Steam::ServerFailedToRespond(HServerListRequest hRequest, int iServer) {
+	printf("[Steam] Server failed to respond\n");
+	emit_signal("server_failed_to_respond", hRequest, iServer);
+}
 
 // Request a new list of servers of a particular type.  These calls each correspond to one of the EMatchMakingType values.
 //uint64_t Steam::requestLANServerList(int appID, Array filters){
@@ -3897,14 +3930,14 @@ uint32 Steam::createListenSocketIP(const int options){
 }
 
 // Creates a connection and begins talking to a "server" over UDP at the given IPv4 or IPv6 address. The remote host must be listening with a matching call to ISteamnetworkingSockets::CreateListenSocketIP on the specified port.
-//uint32 Steam::connectByIPAddress(uint32 ip, uint16 port, Array options){
-//	if(SteamNetworkingSockets() == NULL){
-//		return 0;
-//	}
-//	// Set the address
-//	networkingIPAddress.SetIPv4(ip, port);
-//	return SteamNetworkingSockets()->ConnectByIPAddress(networkingIPAddress, numOptions, &networkingConfigValue);
-//}
+uint32 Steam::connectByIPAddress(uint32 ip, uint16 port, Array options){
+	if(SteamNetworkingSockets() == NULL){
+		return 0;
+	}
+	// Set the address
+	networkingIPAddress.SetIPv4(ip, port);
+	return SteamNetworkingSockets()->ConnectByIPAddress(networkingIPAddress, 0, &networkingConfigValue);
+}
 
 // Like CreateListenSocketIP, but clients will connect using ConnectP2P. The connection will be relayed through the Valve network.
 uint32 Steam::createListenSocketP2P(int port, int optionSize){
@@ -3915,11 +3948,19 @@ uint32 Steam::createListenSocketP2P(int port, int optionSize){
 }
 
 // Begin connecting to a server that is identified using a platform-specific identifier. This uses the default rendezvous service, which depends on the platform and library configuration. (E.g. on Steam, it goes through the steam backend.) The traffic is relayed over the Steam Datagram Relay network.
-uint32 Steam::connectP2P(int port, int numOptions){
+// uint32 Steam::connectP2P(int port, int numOptions){
+// 	if(SteamNetworkingSockets() == NULL){
+// 		return 0;
+// 	}
+// 	return SteamNetworkingSockets()->ConnectP2P(networkingIdentity, port, numOptions, &networkingConfigValue);
+// }
+uint32 Steam::connectP2P(uint64_t steamID, int port, int numOptions){
 	if(SteamNetworkingSockets() == NULL){
 		return 0;
 	}
-	return SteamNetworkingSockets()->ConnectP2P(networkingIdentity, port, numOptions, &networkingConfigValue);
+	SteamNetworkingIdentity identity;
+	identity.SetSteamID((uint64)steamID);
+	return SteamNetworkingSockets()->ConnectP2P(identity, port, numOptions, &networkingConfigValue);
 }
 
 // Accept an incoming connection that has been received on a listen socket.
@@ -7912,6 +7953,9 @@ void Steam::_lobby_invite(LobbyInvite_t* lobbyData){
 	emit_signal("lobby_invite", inviter, lobby, game);
 }
 
+// MATCHMAKING CALLBACKS ////////////////////////
+//
+
 // MUSIC REMOTE CALLBACKS ///////////////////////
 //
 // The majority of callback for Music Remote have no fields and no descriptions. They seem to be primarily fired as responses to functions.
@@ -9391,7 +9435,7 @@ void Steam::_bind_methods(){
 //	ClassDB::bind_method("requestFavoritesServerList", &Steam::requestFavoritesServerList);
 //	ClassDB::bind_method("requestFriendsServerList", &Steam::requestFriendsServerList);
 //	ClassDB::bind_method("requestHistoryServerList", &Steam::requestHistoryServerList);
-//	ClassDB::bind_method("requestInternetServerList", &Steam::requestInternetServerList);
+	ClassDB::bind_method("requestInternetServerList", &Steam::requestInternetServerList);
 //	ClassDB::bind_method("requestLANServerList", &Steam::requestLANServerList);
 //	ClassDB::bind_method("requestSpectatorServerList", &Steam::requestSpectatorServerList);
 ///	ClassDB::bind_method("serverRules", &Steam::serverRules);
@@ -9461,7 +9505,7 @@ void Steam::_bind_methods(){
 
 	// NETWORKING SOCKETS BIND METHODS //////////
 	ClassDB::bind_method("createListenSocketIP", &Steam::createListenSocketIP);
-///	ClassDB::bind_method("connectByIPAddress", &Steam::connectByIPAddress);
+	ClassDB::bind_method("connectByIPAddress", &Steam::connectByIPAddress);
 	ClassDB::bind_method("createListenSocketP2P", &Steam::createListenSocketP2P);
 	ClassDB::bind_method("connectP2P", &Steam::connectP2P);
 	ClassDB::bind_method("acceptConnection", &Steam::acceptConnection);
@@ -9847,7 +9891,12 @@ void Steam::_bind_methods(){
 	ADD_SIGNAL(MethodInfo("lobby_invite", PropertyInfo(Variant::INT, "inviter"), PropertyInfo(Variant::INT, "lobby"), PropertyInfo(Variant::INT, "game")));
 	ADD_SIGNAL(MethodInfo("lobby_match_list"));
 	ADD_SIGNAL(MethodInfo("lobby_kicked"));
-	
+
+	// MATCHMAKING SERVER SIGNALS ///////////////
+	ADD_SIGNAL(MethodInfo("server_refresh_complete", PropertyInfo(Variant::INT, "request"), PropertyInfo(Variant::INT, "response")));
+	ADD_SIGNAL(MethodInfo("server_responded", PropertyInfo(Variant::INT, "request"), PropertyInfo(Variant::INT, "server")));
+	ADD_SIGNAL(MethodInfo("server_failed_to_respond", PropertyInfo(Variant::INT, "request"), PropertyInfo(Variant::INT, "server")));
+
 	// MUSIC REMOTE SIGNALS /////////////////////
 	ADD_SIGNAL(MethodInfo("music_player_remote_to_front"));
 	ADD_SIGNAL(MethodInfo("music_player_remote_will_activate"));

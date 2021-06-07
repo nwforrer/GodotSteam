@@ -29,7 +29,7 @@
 #include "core/dictionary.h"
 #include "core/method_bind_ext.gen.inc"
 
-class Steam: public Object {
+class Steam: public Object, public ISteamMatchmakingServerListResponse {
 	GDCLASS(Steam, Object);
 
 	public:
@@ -736,10 +736,13 @@ class Steam: public Object {
 //		uint64_t requestFavoritesServerList(int appID, Array filters);
 ///		uint64_t requestFriendsServerList(int appID, Array filters);
 ///		uint64_t requestHistoryServerList(int appID, Array filters);
-///		uint64_t requestInternetServerList(int appID, Array filters);
+		uint64_t requestInternetServerList(int appID, Array filters);
 ///		uint64_t requestLANServerList(int appID, Array filters);
 ///		uint64_t requestSpectatorServerList(int appID, Array filters);
 ///		int serverRules(uint32 ip, uint16 port);
+		void RefreshComplete(HServerListRequest hRequest, EMatchMakingServerResponse response);
+		void ServerResponded(HServerListRequest hRequest, int iServer);
+		void ServerFailedToRespond(HServerListRequest hRequest, int iServer);
 
 		// Music ////////////////////////////////
 		bool musicIsEnabled();
@@ -805,9 +808,10 @@ class Steam: public Object {
 
 		// Networking Sockets ///////////////////		
 		uint32 createListenSocketIP(const int options);
-///		uint32 connectByIPAddress(uint32 ip, uint16 port, Array options);
+		uint32 connectByIPAddress(uint32 ip, uint16 port, Array options);
 		uint32 createListenSocketP2P(int port, int optionSize);
-		uint32 connectP2P(int port, int numOptions);
+		// uint32 connectP2P(int port, int numOptions);
+		uint32 connectP2P(uint64_t steamID, int port, int numOptions);
 		int acceptConnection(uint32 connection);
 		bool closeConnection(uint32 peer, int reason, bool linger);
 		bool closeListenSocket(uint32 socket);
@@ -1153,7 +1157,7 @@ class Steam: public Object {
 
 		// Matchmaking Server
 		int serverQuery;
-		uint64_t serverRequest;
+		HServerListRequest serverRequest;
 
 		// Networking Messages
 		SteamNetworkingMessage_t *networkMessages;
